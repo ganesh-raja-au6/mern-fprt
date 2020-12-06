@@ -1,165 +1,100 @@
-import asyncHandler from 'express-async-handler'
-import User from '../model/User.js'
-import generateToken from '../utils/generateToken.js'
+const User = require('../models/user');
+const { Order } = require('../models/order');
 
-
-//user login controoler
-const authUser  = asyncHandler(async(req,res) => {
-    const { email, password } = req.body
-
-    const user = await User.findOne({ email })
-  
-    if (user && (await user.matchPassword(password))) {
-      res.json({
-        _id: user._id,
-        name: user.name,
-        email: user.email,
-        isAdmin: user.isAdmin,
-        token: generateToken(user._id),
-      })
-    } else {
-      res.status(401)
-      throw new Error('Invalid email or password')
-    }
-})
-
-//get user profile controller
-const getUserProfile = asyncHandler(async(req,res) => {
-    const user = await User.findById(req.user._id).populate('posts',['title','description'])
-
-        if (user) {
-          res.json({
-            _id: user._id,
-            name: user.name,
-            email: user.email,
-            posts:user.posts,
-            isAdmin: user.isAdmin,
-          })
-        } else {
-          res.status(404)
-          throw new Error('User not found')
+exports.userById = (req, res, next, id) => {
+    User.findById(id).exec((err, user) => {
+        if (err || !user) {
+            return res.status(400).json({
+                error: 'User not found'
+            });
         }
-}) 
+        req.profile = user;
+        next();
+    });
+};
 
-//update user profile
-const updateUserProfile = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.user._id)
+exports.read = (req, res) => {
+    req.profile.hashed_password = undefined;
+    req.profile.salt = undefined;
+    return res.json(req.profile);
+};
 
-  if (user) {
-    user.name = req.body.name || user.name
-    user.email = req.body.email || user.email
-    if (req.body.password) {
-      user.password = req.body.password
-    }
+exports.update = (req, res) => {
+    const { name, password } = req.body;
 
-    const updatedUser = await user.save()
+    User.findOne({ _id: req.profile._id }, (err, user) => {
+        if (err || !user) {
+            return res.status(400).json({
+                error: 'User not found'
+            });
+        }
+        if (!name) {
+            return res.status(400).json({
+                error: 'Name is required'
+            });
+        } else {
+            user.name = name;
+        }
 
-    res.json({
-      _id: updatedUser._id,
-      name: updatedUser.name,
-      email: updatedUser.email,
-      isAdmin: updatedUser.isAdmin,
-      token: generateToken(updatedUser._id),
-    })
-  } else {
-    res.status(404)
-    throw new Error('User not found')
-  }
-})
+        if (password) {
+            if (password.length < 6) {
+                return res.status(400).json({
+                    error: 'Password should be min 6 characters long'
+                });
+            } else {
+                user.password = password;
+            }
+        }
 
-//user register controller
-const registerUser = asyncHandler(async (req, res) => {
-    const { name, email, password } = req.body
-  
-    const userExists = await User.findOne({ email })
-  
-    if (userExists) {
-      res.status(400)
-      throw new Error('User already exists')
-    }
-  
-    const user = await User.create({
-      name,
-      email,
-      password,
-    })
-  
-    if (user) {
-      res.status(201).json({
-        _id: user._id,
-        name: user.name,
-        email: user.email,
-        isAdmin: user.isAdmin,
-        token: generateToken(user._id),
-      })
-    } else {
-      res.status(400)
-      throw new Error('Invalid user data')
-    }
-  })
-  
-// @desc    Get all users
-// @route   GET /api/users
-// @access  Private/Admin
-const getUsers = asyncHandler(async (req, res) => {
-  const users = await User.find({})
-  res.json(users)
-})
+        user.save((err, updatedUser) => {
+            if (err) {
+                console.log('USER UPDATE ERROR', err);
+                return res.status(400).json({
+                    error: 'User update failed'
+                });
+            }
+            updatedUser.hashed_password = undefined;
+            updatedUser.salt = undefined;
+            res.json(updatedUser);
+        });
+    });
+};
 
-// @desc    Delete user
-// @route   DELETE /api/users/:id
-// @access  Private/Admin
-const deleteUser = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.params.id)
+exports.addOrderToUserHistory = (req, res, next) => {
+    let history = [];
 
-  if (user) {
-    await user.remove()
-    res.json({ message: 'User removed' })
-  } else {
-    res.status(404)
-    throw new Error('User not found')
-  }
-})
+    req.body.order.products.forEach(item => {
+        history.push({
+            _id: item._id,
+            name: item.name,
+            description: item.description,
+            category: item.category,
+            quantity: item.count,
+            transaction_id: req.body.order.transaction_id,
+            amount: req.body.order.amount
+        });
+    });
 
-// @desc    Get user by ID
-// @route   GET /api/users/:id
-// @access  Private/Admin
-const getUserById = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.params.id).select('-password')
+    User.findOneAndUpdate({ _id: req.profile._id }, { $push: { history: history } }, { new: true }, (error, data) => {
+        if (error) {
+            return res.status(400).json({
+                error: 'Could not update user purchase history'
+            });
+        }
+        next();
+    });
+};
 
-  if (user) {
-    res.json(user)
-  } else {
-    res.status(404)
-    throw new Error('User not found')
-  }
-})
-
-// @desc    Update user
-// @route   PUT /api/users/:id
-// @access  Private/Admin
-const updateUser = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.params.id)
-
-  if (user) {
-    user.name = req.body.name || user.name
-    user.email = req.body.email || user.email
-    user.isAdmin = req.body.isAdmin
-
-    const updatedUser = await user.save()
-
-    res.json({
-      _id: updatedUser._id,
-      name: updatedUser.name,
-      email: updatedUser.email,
-      isAdmin: updatedUser.isAdmin,
-    })
-  } else {
-    res.status(404)
-    throw new Error('User not found')
-  }
-})
-
-
-
-export { authUser, registerUser , getUserProfile , updateUserProfile, getUsers, deleteUser ,getUserById,updateUser}
+exports.purchaseHistory = (req, res) => {
+    Order.find({ user: req.profile._id })
+        .populate('user', '_id name')
+        .sort('-created')
+        .exec((err, orders) => {
+            if (err) {
+                return res.status(400).json({
+                    error: errorHandler(err)
+                });
+            }
+            res.json(orders);
+        });
+};

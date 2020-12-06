@@ -1,16 +1,20 @@
-import express from 'express'
+const express = require('express');
+const router = express.Router();
 
-const router = express.Router()
+const { requireSignin, isAuth, isAdmin } = require('../controllers/auth');
 
-import { authUser,getUserProfile,registerUser,updateUserProfile, getUsers, deleteUser,getUserById,updateUser }  from '../controllers/user.js'
+const { userById, read, update, purchaseHistory } = require('../controllers/user');
 
-import { protect,admin } from '../middleware/authMiddleware.js'
+router.get('/secret', requireSignin, (req, res) => {
+    res.json({
+        user: 'got here yay'
+    });
+});
 
+router.get('/user/:userId', requireSignin, isAuth, read);
+router.put('/user/:userId', requireSignin, isAuth, update);
+router.get('/orders/by/user/:userId', requireSignin, isAuth, purchaseHistory);
 
-router.route('/').post(registerUser).get(protect, admin, getUsers)
-router.post('/login', authUser)
-router.route('/profile').get(protect, getUserProfile).put(protect, updateUserProfile)
+router.param('userId', userById);
 
-router.route('/:id').delete(protect, admin , deleteUser).get(protect,admin, getUserById).put(protect,admin,updateUser)
-
-export default router
+module.exports = router;
